@@ -5,7 +5,7 @@ import requests
 
 from ..engine.decorators import Plugin
 from ..plugins import BatchCheckBase, match1
-from .general import DownloadBase
+from ..engine.download import DownloadBase
 
 VALID_URL_BASE = r'(?:https?://)?(?:(?:www|go|m)\.)?twitch\.tv/(?P<id>[0-9_a-zA-Z]+)'
 _OPERATION_HASHES = {
@@ -23,7 +23,7 @@ _CLIENT_ID = 'kimne78kx3ncx6brgo4mv6wki5h1ko'
 @Plugin.download(regexp=VALID_URL_BASE)
 class Twitch(DownloadBase):
     def __init__(self, fname, url, suffix='flv'):
-        DownloadBase.__init__(self, fname, url, suffix=suffix)
+        DownloadBase.__init__(self, fname, url, suffix=suffix, opt_args=['-ss', "00:00:16"])
 
     def check_stream(self):
         if not list(Twitch.BatchCheck([self.url]).check()):
@@ -48,7 +48,6 @@ class Twitch(DownloadBase):
             'sig': access_token['sig'],
             'token': token,
         }
-        self.opt_args = ['-ss', "00:00:16"]
         self.raw_stream_url = f'https://usher.ttvnw.net/api/channel/hls/{channel_name}.m3u8?{urlencode(query)}'
         return True
 

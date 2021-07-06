@@ -1,11 +1,13 @@
 import platform
+import json
 
 from ykdl.common import url_to_module
 from ykdl.util.jsengine import chakra_available, quickjs_available, external_interpreter
+from ykdl.util.html import get_content
 
 from ..engine.decorators import Plugin
 from ..plugins import logger
-from .general import DownloadBase
+from ..engine.download import DownloadBase
 
 
 @Plugin.download(regexp=r'(?:https?://)?(?:(?:www|m)\.)?douyu\.com')
@@ -30,4 +32,11 @@ class Douyu(DownloadBase):
         urls = info.streams[stream_id]['src']
         self.raw_stream_url = urls[0]
         # print(info.title)
-        return True
+        douyuurl = self.url
+        roomnum = douyuurl.split("douyu.com/")[1]
+        roomloop = json.loads(get_content('https://www.douyu.com/wgapi/live/liveweb/getRoomLoopInfo?rid='+roomnum))
+        roomvid = roomloop['data']['vid']
+        if roomvid != "":
+            return False
+        else:
+            return True

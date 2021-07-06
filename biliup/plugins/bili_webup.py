@@ -6,36 +6,37 @@ import math
 import os
 import sys
 import time
-from dataclasses import dataclass, field, InitVar, asdict
+from dataclasses import asdict, dataclass, field, InitVar
 from json import JSONDecodeError
-from os.path import basename, splitext
-from typing import Any, Union
+from os.path import splitext, basename
+from typing import Union, Any
 from urllib import parse
 from urllib.parse import quote
 
 import aiohttp
 import requests
 import rsa
-from requests import utils
 from requests.adapters import HTTPAdapter, Retry
 
-from ...engine import config
-from ...engine.decorators import Plugin
-from ..upload import UploadBase, logger
+from biliup import Plugin, config
+from ..engine.upload import UploadBase, logger
 
 
 @Plugin.upload(platform="bili_web")
 class BiliWeb(UploadBase):
-    def __init__(self, principal, data, user, lines='AUTO', threads=3, tid=174, tags=None, cover_path=None):
+    def __init__(self, principal, data, user, submit_api=None,
+                 lines='AUTO', threads=3, tid=174, tags=None, cover_path=None, description=''):
         super().__init__(principal, data, persistence_path='bili.cookie')
         if tags is None:
             tags = ['星际争霸2', '电子竞技']
         self.user = user
         self.lines = lines
+        self.submit_api = submit_api
         self.threads = threads
         self.tid = tid
         self.tags = tags
         self.cover_path = cover_path
+        self.desc = description
 
     def upload(self, file_list):
         video = Data()
@@ -45,7 +46,8 @@ class BiliWeb(UploadBase):
                 video_part = bili.upload_file(file, self.lines, self.threads)  # 上传视频
                 video.videos.append(video_part)  # 添加已经上传的视频
             video.title = self.data["format_title"]
-            video.desc = '''这个自动录制上传的小程序开源在Github：http://t.cn/RgapTpf(或者在Github搜索ForgQi)
+            video.desc = self.desc + '''
+            这个自动录制上传的小程序开源在Github：https://github.com/ForgQi/bilibiliupload
                 交流群：837362626'''
             video.source = self.data["url"]  # 添加转载地址说明
             # 设置视频分区,默认为174 生活，其他分区
@@ -53,9 +55,9 @@ class BiliWeb(UploadBase):
             video.set_tag(self.tags)
             if self.cover_path:
                 video.cover = bili.cover_up(self.cover_path).replace('http:', '')
-            ret = bili.submit()  # 提交视频
+            ret = bili.submit(self.submit_api)  # 提交视频
         logger.info(f"上传成功: {ret}")
-        self.remove_filelist(file_list)
+        return file_list
 
 
 class BiliBili:
@@ -219,7 +221,7 @@ class BiliBili:
             if lines == 'qn':
                 self._auto_os = {"os": "upos", "query": "upcdn=qn&probe_version=20200810",
                                  "probe_url": "//upos-sz-upcdnqn.bilivideo.com/OK"}
-            logger.info(f"线路选择{self._auto_os['os']}: {self._auto_os['query']}. time: {self._auto_os.get('cost')}")
+            logger.info(f"线路选择 => {self._auto_os['os']}: {self._auto_os['query']}. time: {self._auto_os.get('cost')}")
         if self._auto_os['os'] == 'upos':
             upload = self.upos
         elif self._auto_os['os'] == 'kodo':
@@ -351,33 +353,51 @@ class BiliBili:
                         await afunc(session, chunks_data, clone)
                         break
                     except (asyncio.TimeoutError, aiohttp.ClientError) as e:
-                        logger.error(f"retry chunk{clone['chunk']} >> {i+1}. {e}")
+                        logger.error(f"retry chunk{clone['chunk']} >> {i + 1}. {e}")
 
         async with aiohttp.ClientSession() as session:
             await asyncio.gather(*[upload_chunk() for _ in range(tasks)])
 
-    def submit(self):
+    def submit(self, submit_api=None):
         if not self.video.title:
             self.video.title = self.video.videos[0]["title"]
         self.__session.get('https://member.bilibili.com/x/geetest/pre/add', timeout=5)
-        myinfo = self.__session.get('https://member.bilibili.com/x/web/archive/pre?lang=cn',
-                                    timeout=15).json()['data']['myinfo']
-        myinfo['total_info'] = self.__session.get('https://member.bilibili.com/x/web/index/stat',
-                                                  timeout=15).json()['data']
-        user_weight = 2 if myinfo['level'] > 3 \
-            and myinfo['total_info'] and myinfo['total_info']['total_fans'] > 100 else 1
-        if user_weight == 2:
-            logger.info(f'用户权重: {user_weight} => 网页端分p数量不受限制使用网页端api提交')
-            ret = self.__session.post(f'https://member.bilibili.com/x/vu/web/add?csrf={self.__bili_jct}', timeout=5,
-                                      json=asdict(self.video)).json()
-            if ret["code"] == 0:
-                return ret
-            elif ret["code"] == 21138:
-                logger.info(f'改用客户端接口提交{ret}')
-            else:
-                raise Exception(ret)
 
-        logger.info(f'用户权重: {user_weight} => 网页端分p数量受到限制使用客户端api端提交')
+        if submit_api is None:
+            myinfo = self.__session.get('https://member.bilibili.com/x/web/archive/pre?lang=cn',
+                                        timeout=15).json()['data']['myinfo']
+            total_info = self.__session.get('https://member.bilibili.com/x/web/index/stat', timeout=15).json()
+            if total_info.get('data') is None:
+                logger.error(total_info)
+            myinfo['total_info'] = total_info.get('data')
+            if myinfo['level'] > 3 and myinfo['total_info'] and myinfo['total_info']['total_fans'] > 100:
+                user_weight = 2
+            else:
+                user_weight = 1
+            logger.info(f'用户权重: {user_weight}')
+            submit_api = 'web' if user_weight == 2 else 'client'
+        ret = None
+        if submit_api == 'web':
+            ret = self.submit_web()
+            if ret["code"] == 21138:
+                logger.info(f'改用客户端接口提交{ret}')
+                submit_api = 'client'
+        if submit_api == 'client':
+            ret = self.submit_client()
+        if not ret:
+            raise Exception(f'不存在的选项：{submit_api}')
+        if ret["code"] == 0:
+            return ret
+        else:
+            raise Exception(ret)
+
+    def submit_web(self):
+        logger.info('使用网页端api提交')
+        return self.__session.post(f'https://member.bilibili.com/x/vu/web/add?csrf={self.__bili_jct}', timeout=5,
+                                   json=asdict(self.video)).json()
+
+    def submit_client(self):
+        logger.info('使用客户端api端提交')
         if not self.access_token:
             self.login_by_password(**config['user']['account'])
             self.store()
@@ -389,12 +409,7 @@ class BiliBili:
                 self.login_by_password(**config['user']['account'])
                 self.store()
                 continue
-            break
-
-        if ret["code"] == 0:
             return ret
-        else:
-            raise Exception(ret)
 
     def cover_up(self, img: str):
         """
@@ -456,7 +471,6 @@ class BiliBili:
 class Data:
     """
     cover: 封面图片，可由recovers方法得到视频的帧截图
-    tid: 分区,174为生活，其他分区
     """
     copyright: int = 2
     source: str = ''
