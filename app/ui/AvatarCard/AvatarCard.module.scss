@@ -1,0 +1,48 @@
+.components {
+  .semi-icon-close {
+    opacity: 0;
+    color: var(--semi-color-danger);
+    pointer-events: none;
+    transition: opacity 0.12s ease;
+  }
+  &:hover,
+  &:focus-within {
+    .semi-icon-close {
+      opacity: 1;
+      pointer-events: auto;
+      //cursor: pointer;
+    }
+  }
+}
+
+@media (hover: none), (pointer: coarse) {
+  .components .semi-icon-close {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+.components {
+  height: 52px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  &:hover {
+    background-color: var(--semi-color-fill-0);
+  }
+  .info {
+    margin-left: 8px;
+    flex-grow: 1;
+  }
+  .name {
+    font-size: 14px;
+    line-height: 20px;
+  }
+  .email {
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--semi-color-text-2);
+  }
+}
